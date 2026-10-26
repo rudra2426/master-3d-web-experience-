@@ -1,0 +1,199 @@
+(() => {
+  "use strict";
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  SITE_CONFIG.projects.forEach((project, index) => {
+    const card = document.createElement("article");
+    card.className = "project-card";
+    card.tabIndex = 0;
+    card.setAttribute("aria-label", `${project.title}: ${project.desc}`);
+    card.innerHTML = `<div class="card-top"><span class="card-num">PROJECT / ${project.num}</span><span class="card-index">0${index + 1} ↗</span></div><div class="card-art art-${index + 1}" aria-hidden="true"><div class="art-core"></div></div><h3></h3><p></p><div class="card-bottom"><span></span><span class="card-arrow">↗</span></div>`;
+    card.querySelector("h3").textContent = project.title;
+    card.querySelector("p").textContent = project.desc;
+    card.querySelector(".card-bottom span").textContent = project.tech;
+    $("#project-grid").appendChild(card);
+  });
+  $("#year").textContent = new Date().getFullYear();
+
+  const cursorDot = $(".cursor-dot"), cursorRing = $(".cursor-ring");
+  let pointer = { x: innerWidth / 2, y: innerHeight / 2 };
+  let ringPosition = { ...pointer };
+  if (matchMedia("(pointer:fine)").matches) {
+    document.body.classList.add("cursor-ready");
+    window.addEventListener("pointermove", event => {
+      pointer.x = event.clientX;
+      pointer.y = event.clientY;
+    }, { passive: true });
+    const moveCursor = () => {
+      cursorDot.style.left = pointer.x + "px";
+      cursorDot.style.top = pointer.y + "px";
+      ringPosition.x += (pointer.x - ringPosition.x) * .16;
+      ringPosition.y += (pointer.y - ringPosition.y) * .16;
+      cursorRing.style.left = ringPosition.x + "px";
+      cursorRing.style.top = ringPosition.y + "px";
+      requestAnimationFrame(moveCursor);
+    };
+    moveCursor();
+    document.querySelectorAll("a, .project-card").forEach(element => {
+      element.addEventListener("pointerenter", () => cursorRing.classList.add("active"));
+      element.addEventListener("pointerleave", () => cursorRing.classList.remove("active"));
+      if (element.classList.contains("project-card")) {
+        element.addEventListener("pointermove", event => {
+          const rect = element.getBoundingClientRect();
+          element.style.setProperty("--mx", ((event.clientX - rect.left) / rect.width * 100) + "%");
+          element.style.setProperty("--my", ((event.clientY - rect.top) / rect.height * 100) + "%");
+        });
+      }
+    });
+    if (window.gsap) {
+      document.querySelectorAll(".magnet").forEach(element => {
+        element.addEventListener("pointermove", event => {
+          const rect = element.getBoundingClientRect();
+          gsap.to(element, { x: (event.clientX - rect.left - rect.width / 2) * .12, y: (event.clientY - rect.top - rect.height / 2) * .12, duration: .35, ease: "power3.out" });
+        });
+        element.addEventListener("pointerleave", () => gsap.to(element, { x: 0, y: 0, duration: .55, ease: "elastic.out(1,.4)" }));
+      });
+    }
+  }
+  const topbar = $("#topbar");
+  window.addEventListener("scroll", () => topbar.classList.toggle("scrolled", window.scrollY > 30), { passive: true });
+
+  const hideLoader = () => $("#loader").classList.add("done");
+  if (!window.THREE) { hideLoader(); return; }
+
+  let renderer, scene, camera, knot, stars, cyanLight, violetLight, animationFrame, paused = false;
+  try {
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.25;
+    $("#webgl").appendChild(renderer.domElement);
+  } catch (error) {
+    console.warn("WebGL is unavailable; showing the full interface without 3D.", error);
+    hideLoader();
+    return;
+  }
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(innerWidth < 700 ? 48 : 38, innerWidth / innerHeight, .1, 100);
+  const cameraDestination = new THREE.Vector3(0, 0, 9.3);
+  const lookTarget = new THREE.Vector3(1.2, 0, 0);
+  camera.position.copy(cameraDestination);
+  scene.add(new THREE.AmbientLight(0x7280a9, .5));
+  const rimLight = new THREE.DirectionalLight(0x8abaff, 1.5);
+  rimLight.position.set(-4, 4, 5);
+  scene.add(rimLight);
+  cyanLight = new THREE.PointLight(0x00f0ff, 4.5, 12);
+  violetLight = new THREE.PointLight(0xaa35ff, 5, 13);
+  scene.add(cyanLight, violetLight);
+
+  const knotGeometry = new THREE.TorusKnotGeometry(1.28, .42, 220, 32, 2, 3);
+  const knotMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0x9caed4, metalness: .82, roughness: .19, clearcoat: 1,
+    clearcoatRoughness: .1, emissive: 0x06141d, emissiveIntensity: .3
+  });
+  knot = new THREE.Mesh(knotGeometry, knotMaterial);
+  knot.position.set(1.65, .05, 0);
+  scene.add(knot);
+  knot.add(new THREE.Mesh(knotGeometry, new THREE.MeshBasicMaterial({
+    color: 0x76f6ff, wireframe: true, transparent: true, opacity: .12
+  })));
+
+  const starCount = 1800;
+  const positions = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i++) {
+    positions[i * 3] = (Math.random() - .5) * 35;
+    positions[i * 3 + 1] = (Math.random() - .5) * 25;
+    positions[i * 3 + 2] = (Math.random() - .5) * 24 - 5;
+  }
+  const starGeometry = new THREE.BufferGeometry();
+  starGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({
+    color: 0xb3d8ff, size: .025, transparent: true, opacity: .72,
+    sizeAttenuation: true, depthWrite: false
+  }));
+  scene.add(stars);
+
+  const mouse = { x: 0, y: 0 }, smoothMouse = { x: 0, y: 0 };
+  window.addEventListener("pointermove", event => {
+    mouse.x = (event.clientX / innerWidth - .5) * 2;
+    mouse.y = (event.clientY / innerHeight - .5) * 2;
+  }, { passive: true });
+
+  if (window.gsap && window.ScrollTrigger) {
+    gsap.registerPlugin(ScrollTrigger);
+    const stages = [
+      { id: "home", camera: [0, 0, 9.3], target: [1.2, 0, 0], object: [1.65, .05, 0], scale: 1 },
+      { id: "work", camera: [-3.2, .5, 11], target: [0, 0, 0], object: [1.9, -.15, 0], scale: .78 },
+      { id: "about", camera: [0, 5.6, 10], target: [0, 0, 0], object: [0, -1.5, -1], scale: .58 },
+      { id: "contact", camera: [0, 0, 8.7], target: [0, 0, 0], object: [0, 0, 0], scale: .82 }
+    ];
+    stages.forEach((stage, index) => {
+      const section = document.getElementById(stage.id);
+      ScrollTrigger.create({
+        trigger: section, start: "top center", end: "bottom center",
+        onEnter: () => setStage(stage), onEnterBack: () => setStage(stage)
+      });
+      if (index > 0 && !reducedMotion) {
+        const selector = stage.id === "work" ? ".project-card" : stage.id === "about" ? ".about-copy > *" : ".contact > *";
+        gsap.fromTo(section.querySelectorAll(selector), { y: 32, opacity: 0 }, {
+          y: 0, opacity: 1, duration: .8, stagger: .12, ease: "power3.out",
+          scrollTrigger: { trigger: section, start: "top 68%", once: true }
+        });
+      }
+    });
+    function setStage(stage) {
+      const duration = reducedMotion ? 0 : 1.4;
+      gsap.to(cameraDestination, { x: stage.camera[0], y: stage.camera[1], z: stage.camera[2], duration, ease: "power3.inOut", overwrite: true });
+      gsap.to(lookTarget, { x: stage.target[0], y: stage.target[1], z: stage.target[2], duration, ease: "power3.inOut", overwrite: true });
+      gsap.to(knot.position, { x: stage.object[0], y: stage.object[1], z: stage.object[2], duration, ease: "power3.inOut", overwrite: true });
+      gsap.to(knot.scale, { x: stage.scale, y: stage.scale, z: stage.scale, duration, ease: "power3.inOut", overwrite: true });
+    }
+  }
+
+  const clock = new THREE.Clock();
+  function render() {
+    if (paused) return;
+    const time = clock.getElapsedTime();
+    smoothMouse.x += (mouse.x - smoothMouse.x) * .035;
+    smoothMouse.y += (mouse.y - smoothMouse.y) * .035;
+    const parallax = innerWidth < 700 ? .18 : .5;
+    camera.position.x += (cameraDestination.x + smoothMouse.x * parallax - camera.position.x) * .035;
+    camera.position.y += (cameraDestination.y - smoothMouse.y * parallax * .6 - camera.position.y) * .035;
+    camera.position.z += (cameraDestination.z - camera.position.z) * .035;
+    camera.lookAt(lookTarget);
+    knot.rotation.x = .28 + Math.sin(time * .3) * .18 + smoothMouse.y * .12;
+    knot.rotation.y += reducedMotion ? .00025 : .003 + smoothMouse.x * .001;
+    knot.rotation.z = Math.sin(time * .18) * .12;
+    stars.rotation.y = time * .008 + smoothMouse.x * .035;
+    stars.rotation.x = Math.sin(time * .1) * .025 + smoothMouse.y * .025;
+    cyanLight.position.set(Math.cos(time * .48) * 4 + smoothMouse.x * 1.5, Math.sin(time * .66) * 2.4, 2 + Math.sin(time * .35));
+    violetLight.position.set(Math.cos(time * .38 + Math.PI) * 4 - smoothMouse.x, Math.sin(time * .54 + 1) * 2.8, 1 + Math.cos(time * .4));
+    renderer.render(scene, camera);
+    animationFrame = requestAnimationFrame(render);
+  }
+  function resize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.fov = innerWidth < 700 ? 48 : 38;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  window.addEventListener("resize", resize, { passive: true });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      paused = true;
+      cancelAnimationFrame(animationFrame);
+    } else if (paused) {
+      paused = false;
+      clock.start();
+      render();
+    }
+  });
+  render();
+  window.addEventListener("load", () => setTimeout(hideLoader, 400), { once: true });
+  setTimeout(hideLoader, 3500);
+})();
